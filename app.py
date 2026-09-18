@@ -1,6 +1,5 @@
 import os,secrets
 from datetime import datetime,timezone
-from functools import wraps
 from flask import Flask,request,jsonify,session,redirect,render_template,flash
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import desc
@@ -27,12 +26,6 @@ class WaterProfile(db.Model):
 class Alert(db.Model):
  id=db.Column(db.Integer,primary_key=True); sensor=db.Column(db.String(30),nullable=False); value=db.Column(db.Float,nullable=False); level=db.Column(db.String(20),nullable=False); message=db.Column(db.String(255),nullable=False); created_at=db.Column(db.DateTime,default=lambda:datetime.now(timezone.utc),index=True)
 
-def auth(f):
- @wraps(f)
- def w(*a,**k):
-  if not session.get("user_id"): return redirect("/login")
-  return f(*a,**k)
- return w
 def device_ok():
  return bool(os.getenv("DEVICE_API_KEY")) and secrets.compare_digest(request.headers.get("X-Device-Key",""),os.getenv("DEVICE_API_KEY"))
 def cfg():
@@ -69,28 +62,22 @@ def login():
 @app.post("/logout")
 def logout(): session.clear(); return redirect("/login")
 @app.get("/")
-@auth
 def dashboard(): return render_template("dashboard.html")
 @app.get("/api/readings")
-@auth
 def api_readings():
  try: limit=max(1,min(int(request.args.get("limit",100)),1000))
  except: limit=100
  return jsonify([rd(x) for x in Reading.query.order_by(desc(Reading.created_at)).limit(limit).all()][::-1])
 @app.get("/api/readings/latest")
-@auth
 def latest():
  x=Reading.query.order_by(desc(Reading.created_at)).first()
  return jsonify({"reading":rd(x) if x else None,"settings":cfg(),"profile":profile_json(profile())})
 @app.get("/api/alerts")
-@auth
 def api_alerts():
  return jsonify([{"id":x.id,"sensor":x.sensor,"value":x.value,"level":x.level,"message":x.message,"created_at":iso(x.created_at)} for x in Alert.query.order_by(desc(Alert.created_at)).limit(100).all()])
 @app.get("/api/settings")
-@auth
 def api_settings(): return jsonify(cfg())
 @app.post("/api/settings")
-@auth
 def save_settings():
  data=request.get_json(silent=True) or {}
  for k in DEFAULTS:
@@ -100,12 +87,10 @@ def save_settings():
    x=Setting.query.filter_by(key=k).first() or Setting(key=k); x.value=v; db.session.add(x)
  db.session.commit(); return jsonify(cfg())
 @app.get("/api/water-profile")
-@auth
 def get_water_profile():
  x=profile()
  return jsonify({**profile_json(x),"options":{"water_types":WATER_TYPES,"aquaculture_types":AQUACULTURE_TYPES,"water_sources":WATER_SOURCES}})
 @app.post("/api/water-profile")
-@auth
 def save_water_profile():
  data=request.get_json(silent=True) or {}; x=profile()
  wt=str(data.get("water_type",x.water_type)).strip(); aq=str(data.get("aquaculture_type",x.aquaculture_type)).strip(); ws=str(data.get("water_source",x.water_source)).strip(); mn=str(data.get("monitoring_name",x.monitoring_name)).strip()
@@ -124,7 +109,6 @@ def ingest():
  db.session.commit()
  return jsonify(ok=True,reading=rd(r),alerts=[{"sensor":x[0],"value":x[1],"level":x[2],"message":x[3]} for x in problems])
 @app.post("/api/test-reading")
-@auth
 def test_reading():
  data=request.get_json(silent=True) or {}
  try: r=Reading(temperature=float(data["temperature"]),ph=float(data["ph"]),turbidity=float(data["turbidity"]))
