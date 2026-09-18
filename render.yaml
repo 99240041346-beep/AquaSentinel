@@ -3,7 +3,7 @@ services:
     name: aquasentinel
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app
+    startCommand: gunicorn --workers 2 --threads 4 --timeout 120 app:app
     envVars:
       - key: SECRET_KEY
         generateValue: true
@@ -12,10 +12,11 @@ services:
           name: aquasentinel-db
           property: connectionString
       - key: DEVICE_API_KEY
-        sync: false
+        generateValue: true
       - key: ADMIN_USERNAME
         value: admin
       - key: ADMIN_PASSWORD
         sync: false
 databases:
   - name: aquasentinel-db
+    plan: free
