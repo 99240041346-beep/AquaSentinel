@@ -33,30 +33,23 @@ def auth(f):
   if not session.get("user_id"): return redirect("/login")
   return f(*a,**k)
  return w
-
 def device_ok():
  return bool(os.getenv("DEVICE_API_KEY")) and secrets.compare_digest(request.headers.get("X-Device-Key",""),os.getenv("DEVICE_API_KEY"))
-
 def cfg():
  d=DEFAULTS.copy()
  for x in Setting.query.all(): d[x.key]=x.value
  return d
-
 def profile():
  x=WaterProfile.query.first()
  if not x:
   x=WaterProfile(); db.session.add(x); db.session.commit()
  return x
-
 def profile_json(x):
  return {"water_type":x.water_type,"aquaculture_type":x.aquaculture_type,"water_source":x.water_source,"monitoring_name":x.monitoring_name}
-
 def iso(dt):
  return dt.astimezone(timezone.utc).isoformat() if dt.tzinfo else dt.replace(tzinfo=timezone.utc).isoformat()
-
 def rd(x):
  return {"id":x.id,"temperature":x.temperature,"ph":x.ph,"turbidity":x.turbidity,"created_at":iso(x.created_at)}
-
 def evaluate(r,c):
  out=[]
  if r.temperature<c["temp_min"] or r.temperature>c["temp_max"]: out.append(("temperature",r.temperature,"CRITICAL","Temperature outside configured range"))
@@ -66,7 +59,6 @@ def evaluate(r,c):
 
 @app.get("/health")
 def health(): return jsonify(status="ok",service="AquaSentinel")
-
 @app.route("/login",methods=["GET","POST"])
 def login():
  if request.method=="POST":
@@ -74,36 +66,29 @@ def login():
   if u and check_password_hash(u.password_hash,request.form.get("password","")): session["user_id"]=u.id; return redirect("/")
   flash("Invalid username or password")
  return render_template("login.html")
-
 @app.post("/logout")
 def logout(): session.clear(); return redirect("/login")
-
 @app.get("/")
 @auth
 def dashboard(): return render_template("dashboard.html")
-
 @app.get("/api/readings")
 @auth
 def api_readings():
  try: limit=max(1,min(int(request.args.get("limit",100)),1000))
  except: limit=100
  return jsonify([rd(x) for x in Reading.query.order_by(desc(Reading.created_at)).limit(limit).all()][::-1])
-
 @app.get("/api/readings/latest")
 @auth
 def latest():
  x=Reading.query.order_by(desc(Reading.created_at)).first()
  return jsonify({"reading":rd(x) if x else None,"settings":cfg(),"profile":profile_json(profile())})
-
 @app.get("/api/alerts")
 @auth
 def api_alerts():
  return jsonify([{"id":x.id,"sensor":x.sensor,"value":x.value,"level":x.level,"message":x.message,"created_at":iso(x.created_at)} for x in Alert.query.order_by(desc(Alert.created_at)).limit(100).all()])
-
 @app.get("/api/settings")
 @auth
 def api_settings(): return jsonify(cfg())
-
 @app.post("/api/settings")
 @auth
 def save_settings():
@@ -114,28 +99,19 @@ def save_settings():
    except: continue
    x=Setting.query.filter_by(key=k).first() or Setting(key=k); x.value=v; db.session.add(x)
  db.session.commit(); return jsonify(cfg())
-
 @app.get("/api/water-profile")
 @auth
 def get_water_profile():
  x=profile()
  return jsonify({**profile_json(x),"options":{"water_types":WATER_TYPES,"aquaculture_types":AQUACULTURE_TYPES,"water_sources":WATER_SOURCES}})
-
 @app.post("/api/water-profile")
 @auth
 def save_water_profile():
- data=request.get_json(silent=True) or {}
- x=profile()
- wt=str(data.get("water_type",x.water_type)).strip()
- aq=str(data.get("aquaculture_type",x.aquaculture_type)).strip()
- ws=str(data.get("water_source",x.water_source)).strip()
- mn=str(data.get("monitoring_name",x.monitoring_name)).strip()
- if wt not in WATER_TYPES or aq not in AQUACULTURE_TYPES or ws not in WATER_SOURCES or not mn or len(mn)>80:
-  return jsonify(error="Invalid water profile"),400
- x.water_type=wt; x.aquaculture_type=aq; x.water_source=ws; x.monitoring_name=mn
- db.session.commit()
+ data=request.get_json(silent=True) or {}; x=profile()
+ wt=str(data.get("water_type",x.water_type)).strip(); aq=str(data.get("aquaculture_type",x.aquaculture_type)).strip(); ws=str(data.get("water_source",x.water_source)).strip(); mn=str(data.get("monitoring_name",x.monitoring_name)).strip()
+ if wt not in WATER_TYPES or aq not in AQUACULTURE_TYPES or ws not in WATER_SOURCES or not mn or len(mn)>80: return jsonify(error="Invalid water profile"),400
+ x.water_type=wt; x.aquaculture_type=aq; x.water_source=ws; x.monitoring_name=mn; db.session.commit()
  return jsonify(profile_json(x))
-
 @app.post("/api/readings")
 def ingest():
  if not device_ok(): return jsonify(error="Unauthorized device"),401
@@ -147,7 +123,6 @@ def ingest():
  for n,v,l,m in problems: db.session.add(Alert(sensor=n,value=v,level=l,message=m))
  db.session.commit()
  return jsonify(ok=True,reading=rd(r),alerts=[{"sensor":x[0],"value":x[1],"level":x[2],"message":x[3]} for x in problems])
-
 @app.post("/api/test-reading")
 @auth
 def test_reading():
@@ -166,6 +141,24 @@ def init_db():
   if not Setting.query.filter_by(key=k).first(): db.session.add(Setting(key=k,value=v))
  if not WaterProfile.query.first(): db.session.add(WaterProfile())
  db.session.commit(); print("AquaSentinel database initialized.")
+
+@app.cli.command("reset-admin")
+def reset_admin():
+ """Reset the admin password using ADMIN_PASSWORD or an interactive prompt."""
+ username=os.getenv("ADMIN_USERNAME","admin").strip() or "admin"
+ password=os.getenv("ADMIN_PASSWORD","").strip()
+ if not password:
+  import getpass
+  password=getpass.getpass("New admin password: ")
+ if len(password)<8:
+  print("Password must be at least 8 characters."); return 1
+ u=User.query.filter_by(username=username).first()
+ if not u:
+  u=User(username=username,password_hash=generate_password_hash(password)); db.session.add(u)
+ else:
+  u.password_hash=generate_password_hash(password)
+ db.session.commit()
+ print(f"Admin password reset for user: {username}")
 
 with app.app_context(): db.create_all()
 if __name__=="__main__": app.run(host="0.0.0.0",port=int(os.getenv("PORT",5000)),debug=True)
